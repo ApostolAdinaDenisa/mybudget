@@ -395,6 +395,22 @@
       color: white;
     }
 
+    .custom-category-row {
+      display: flex;
+      gap: 8px;
+      margin: 0 0 14px;
+    }
+
+    .custom-category-row input {
+      max-width: 260px;
+    }
+
+    .custom-category-row button {
+      width: auto;
+      padding: 10px 16px;
+      white-space: nowrap;
+    }
+
     .quick-form-grid {
       display: grid;
       grid-template-columns: 1.3fr 1.5fr 1fr 0.9fr auto;
@@ -458,6 +474,16 @@
       transform: translate(-50%, -50%);
       text-align: center;
       pointer-events: none;
+      z-index: 2;
+      width: 48%;
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 50%;
+      aspect-ratio: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 18px rgba(214, 51, 108, 0.08);
     }
 
     .donut-center-text .label {
@@ -771,6 +797,10 @@
           <div class="pill" data-cat="Casă & Facturi">🏡 Casă & Facturi</div>
           <div class="pill" data-cat="Altele">✨ Altele</div>
         </div>
+        <div class="custom-category-row">
+          <input type="text" id="customCategoryInput" maxlength="30" placeholder="Adaugă o categorie nouă" />
+          <button type="button" class="btn-save" id="addCategoryButton">+ Categorie</button>
+        </div>
 
         <form id="expenseForm" class="quick-form-grid">
           <select id="categoryInput">
@@ -1033,13 +1063,15 @@
     AED: 1.26, CAD: 3.35, AUD: 3.05, JPY: 0.031
   };
 
-  const CATEGORIES = [
+  let CATEGORIES = [
     "Mâncare", "Ieșiri în oraș", "Shopping & Beauty",
     "Transport", "Casă & Facturi", "Altele"
   ];
 
   const PINK_PALETTE = [
-    "#c2255c", "#e64980", "#f06595", "#faa2c1", "#fcc2d7", "#d6336c"
+    "#c2255c", "#d6336c", "#e64980", "#f06595", "#fa729e",
+    "#faa2c1", "#ffbad0", "#fcc2d7", "#a61e4d", "#9c1742",
+    "#d45a82", "#bc3a70"
   ];
 
   let currentMonth = MONTHS[new Date().getMonth()];
@@ -1060,9 +1092,12 @@
     document.getElementById("appScreen").classList.add("active");
     const result = await api("/me");
     const expenses = await api("/expenses");
+    const categoryResult = await api("/categories");
     currentUser = result.user;
     budgetData = expenses.data || {};
+    CATEGORIES = categoryResult.categories || CATEGORIES;
     document.getElementById("displayUserName").textContent = currentUser.name;
+    renderCategoryControls();
     renderAll();
   }
 
@@ -1079,22 +1114,60 @@
     }
   });
 
-  // Selectare rapida categorie
-  const categoryPills = document.querySelectorAll(".pill");
   const categoryInput = document.getElementById("categoryInput");
-  categoryPills.forEach(pill => {
-    pill.addEventListener("click", () => {
-      categoryPills.forEach(p => p.classList.remove("selected"));
-      pill.classList.add("selected");
-      categoryInput.value = pill.dataset.cat;
-      document.getElementById("descInput").focus();
+
+  function renderCategoryControls(selectedCategory) {
+    const pills = document.getElementById("categoryPills");
+    const selected = selectedCategory || categoryInput.value || CATEGORIES[0];
+    pills.innerHTML = CATEGORIES.map((category, index) => {
+      const icons = ["🍔", "🥂", "🛍️", "🚕", "🏡", "✨"];
+      return `<div class="pill ${category === selected ? "selected" : ""}" data-cat="${category.replaceAll('"', "&quot;")}">
+        ${icons[index] || "🌸"} ${category}
+      </div>`;
+    }).join("");
+    categoryInput.innerHTML = CATEGORIES.map(category =>
+      `<option value="${category.replaceAll('"', "&quot;")}">${category}</option>`
+    ).join("");
+    categoryInput.value = CATEGORIES.includes(selected) ? selected : CATEGORIES[0];
+
+    document.querySelectorAll(".pill").forEach(pill => {
+      pill.addEventListener("click", () => {
+        document.querySelectorAll(".pill").forEach(p => p.classList.remove("selected"));
+        pill.classList.add("selected");
+        categoryInput.value = pill.dataset.cat;
+        document.getElementById("descInput").focus();
+      });
+    });
+  }
+
+  categoryInput.addEventListener("change", () => {
+    document.querySelectorAll(".pill").forEach(p => {
+      p.classList.toggle("selected", p.dataset.cat === categoryInput.value);
     });
   });
 
-  categoryInput.addEventListener("change", () => {
-    categoryPills.forEach(p => {
-      p.classList.toggle("selected", p.dataset.cat === categoryInput.value);
-    });
+  document.getElementById("addCategoryButton").addEventListener("click", async () => {
+    const input = document.getElementById("customCategoryInput");
+    const name = input.value.trim();
+    if (!name) return;
+    try {
+      const result = await api("/categories", {
+        method: "POST",
+        body: JSON.stringify({ name })
+      });
+      CATEGORIES = result.categories;
+      input.value = "";
+      renderCategoryControls(name);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  document.getElementById("customCategoryInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      document.getElementById("addCategoryButton").click();
+    }
   });
 
   monthSelect.addEventListener("change", (e) => {

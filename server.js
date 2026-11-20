@@ -42,6 +42,12 @@ await pool.query(`
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at TIMESTAMPTZ NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS categories (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    UNIQUE (user_id, name)
+  );
 `);
 
 const app = express();
@@ -170,6 +176,42 @@ app.post("/api/auth/change-password", auth, async (req, res, next) => {
     if (password.length < 8) return res.status(400).json({ error: "Parola trebuie să aibă cel puțin 8 caractere." });
     await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [await bcrypt.hash(password, 12), req.user.id]);
     res.json({ message: "Parola a fost actualizată." });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/categories", auth, async (req, res, next) => {
+  try {
+    const defaults = [
+      "Mâncare", "Ieșiri în oraș", "Shopping & Beauty",
+      "Transport", "Casă & Facturi", "Altele"
+    ];
+    await pool.query(
+      "INSERT INTO categories (user_id, name) SELECT $1, name FROM unnest($2::text[]) AS name ON CONFLICT DO NOTHING",
+      [req.user.id, defaults]
+    );
+    const result = await pool.query(
+      "SELECT name FROM categories WHERE user_id = $1 ORDER BY id",
+      [req.user.id]
+    );
+    res.json({ categories: result.rows.map(row => row.name) });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/categories", auth, async (req, res, next) => {
+  try {
+    const name = String(req.body.name || "").trim();
+    if (!name || name.length > 30) {
+      return res.status(400).json({ error: "Introdu o categorie cu cel mult 30 de caractere." });
+    }
+    await pool.query(
+      "INSERT INTO categories (user_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+      [req.user.id, name]
+    );
+    const result = await pool.query(
+      "SELECT name FROM categories WHERE user_id = $1 ORDER BY id",
+      [req.user.id]
+    );
+    res.status(201).json({ categories: result.rows.map(row => row.name) });
   } catch (error) { next(error); }
 });
 
