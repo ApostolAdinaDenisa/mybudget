@@ -37,6 +37,13 @@ await pool.query(`
     spent_on TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  CREATE TABLE IF NOT EXISTS incomes (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    month TEXT NOT NULL,
+    amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
+    UNIQUE (user_id, month)
+  );
   CREATE TABLE IF NOT EXISTS password_resets (
     token_hash TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -47,6 +54,22 @@ await pool.query(`
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     UNIQUE (user_id, name)
+  );
+  CREATE TABLE IF NOT EXISTS friend_requests (
+    id SERIAL PRIMARY KEY,
+    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recipient_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    recipient_email TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (sender_id, recipient_email)
+  );
+  CREATE TABLE IF NOT EXISTS friendships (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    friend_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, friend_id),
+    CHECK (user_id <> friend_id)
   );
 `);
 
@@ -98,6 +121,10 @@ app.post("/api/auth/register", async (req, res, next) => {
       [name, email, hash]
     );
     const user = result.rows[0];
+    await pool.query(
+      "UPDATE friend_requests SET recipient_id = $1 WHERE LOWER(recipient_email) = $2 AND recipient_id IS NULL",
+      [user.id, email]
+    );
     res.status(201).json({ token: issueToken(user), user });
   } catch (error) {
     if (error.code === "23505") return res.status(409).json({ error: "Acest email are deja un cont." });
@@ -244,6 +271,174 @@ app.post("/api/expenses", auth, async (req, res, next) => {
 app.delete("/api/expenses/:id", auth, async (req, res, next) => {
   try {
     await pool.query("DELETE FROM expenses WHERE id = $1 AND user_id = $2", [req.params.id, req.user.id]);
+    res.status(204).end();
+  } catch (error) { next(error); }
+});
+
+app.get("/api/income", auth, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      "SELECT month, amount FROM incomes WHERE user_id = $1",
+      [req.user.id]
+    );
+    res.json({
+      data: Object.fromEntries(result.rows.map(row => [row.month, Number(row.amount)]))
+    });
+  } catch (error) { next(error); }
+});
+
+app.put("/api/income", auth, async (req, res, next) => {
+  try {
+    const month = String(req.body.month || "").trim();
+    const rawAmount = req.body.amount;
+    if (!month) return res.status(400).json({ error: "Luna venitului este invalidă." });
+
+    if (rawAmount === "" || rawAmount === null || typeof rawAmount === "undefined") {
+      await pool.query("DELETE FROM incomes WHERE user_id = $1 AND month = $2", [req.user.id, month]);
+      return res.json({ amount: null });
+    }
+
+    const amount = Number(rawAmount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      return res.status(400).json({ error: "Venitul trebuie să fie un număr pozitiv sau zero." });
+    }
+    const result = await pool.query(
+      `INSERT INTO incomes (user_id, month, amount) VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, month) DO UPDATE SET amount = EXCLUDED.amount
+       RETURNING amount`,
+      [req.user.id, month, amount]
+    );
+    res.json({ amount: Number(result.rows[0].amount) });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/friends", auth, async (req, res, next) => {
+  try {
+    const requests = await pool.query(
+      `SELECT fr.id, u.name, u.email
+       FROM friend_requests fr
+       JOIN users u ON u.id = fr.sender_id
+       WHERE fr.recipient_id = $1 AND fr.status = 'pending'
+       ORDER BY fr.created_at DESC`,
+      [req.user.id]
+    );
+    const friendsResult = await pool.query(
+      `SELECT u.id, u.name, u.email
+       FROM friendships f
+       JOIN users u ON u.id = f.friend_id
+       WHERE f.user_id = $1
+       ORDER BY u.name`,
+      [req.user.id]
+    );
+    const friends = [];
+    for (const friend of friendsResult.rows) {
+      const summary = await pool.query(
+        `SELECT e.month, COALESCE(SUM(e.amount * CASE e.currency
+          WHEN 'RON' THEN 1 WHEN 'EUR' THEN 4.98 WHEN 'USD' THEN 4.65
+          WHEN 'GBP' THEN 5.95 WHEN 'CHF' THEN 5.30 WHEN 'MDL' THEN 0.26
+          WHEN 'HUF' THEN 0.0125 WHEN 'BGN' THEN 2.54 WHEN 'PLN' THEN 1.16
+          WHEN 'TRY' THEN 0.14 WHEN 'AED' THEN 1.26 WHEN 'CAD' THEN 3.35
+          WHEN 'AUD' THEN 3.05 WHEN 'JPY' THEN 0.031 ELSE 1 END), 0) AS spent,
+          i.amount AS income
+         FROM expenses e
+         LEFT JOIN incomes i ON i.user_id = e.user_id AND i.month = e.month
+         WHERE e.user_id = $1
+         GROUP BY e.month, i.amount
+         ORDER BY e.month`,
+        [friend.id]
+      );
+      const months = Object.fromEntries(summary.rows.map(row => [
+        row.month, { spent: Number(row.spent), income: row.income === null ? null : Number(row.income) }
+      ]));
+      const incomes = await pool.query(
+        "SELECT month, amount FROM incomes WHERE user_id = $1",
+        [friend.id]
+      );
+      for (const row of incomes.rows) {
+        if (!months[row.month]) months[row.month] = { spent: 0, income: Number(row.amount) };
+        else months[row.month].income = Number(row.amount);
+      }
+      friends.push({ ...friend, months });
+    }
+    res.json({
+      requests: requests.rows,
+      friends
+    });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/friends/invite", auth, async (req, res, next) => {
+  try {
+    const email = cleanEmail(req.body.email);
+    if (!email || !email.includes("@")) {
+      return res.status(400).json({ error: "Introdu un email valid." });
+    }
+    const recipient = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
+    if (recipient.rows[0]?.id === req.user.id) {
+      return res.status(400).json({ error: "Nu te poți adăuga pe tine ca prieten." });
+    }
+    if (recipient.rows[0]) {
+      const existing = await pool.query(
+        "SELECT 1 FROM friendships WHERE (user_id = $1 AND friend_id = $2) OR (user_id = $2 AND friend_id = $1)",
+        [req.user.id, recipient.rows[0].id]
+      );
+      if (existing.rows[0]) return res.status(409).json({ error: "Sunteți deja prieteni." });
+    }
+    await pool.query(
+      `INSERT INTO friend_requests (sender_id, recipient_id, recipient_email)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (sender_id, recipient_email)
+       DO UPDATE SET recipient_id = EXCLUDED.recipient_id, status = 'pending'`,
+      [req.user.id, recipient.rows[0]?.id || null, email]
+    );
+    res.status(201).json({ message: "Invitația a fost trimisă." });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/friends/requests/:id/accept", auth, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const request = await client.query(
+      "SELECT sender_id FROM friend_requests WHERE id = $1 AND recipient_id = $2 AND status = 'pending'",
+      [req.params.id, req.user.id]
+    );
+    if (!request.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Invitația nu mai este disponibilă." });
+    }
+    const senderId = request.rows[0].sender_id;
+    await client.query(
+      "INSERT INTO friendships (user_id, friend_id) VALUES ($1, $2), ($2, $1) ON CONFLICT DO NOTHING",
+      [req.user.id, senderId]
+    );
+    await client.query("UPDATE friend_requests SET status = 'accepted' WHERE id = $1", [req.params.id]);
+    await client.query("COMMIT");
+    res.json({ message: "Prieten adăugat." });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.delete("/api/friends/requests/:id", auth, async (req, res, next) => {
+  try {
+    await pool.query(
+      "UPDATE friend_requests SET status = 'declined' WHERE id = $1 AND recipient_id = $2 AND status = 'pending'",
+      [req.params.id, req.user.id]
+    );
+    res.status(204).end();
+  } catch (error) { next(error); }
+});
+
+app.delete("/api/friends/:id", auth, async (req, res, next) => {
+  try {
+    await pool.query(
+      "DELETE FROM friendships WHERE (user_id = $1 AND friend_id = $2) OR (user_id = $2 AND friend_id = $1)",
+      [req.user.id, req.params.id]
+    );
     res.status(204).end();
   } catch (error) { next(error); }
 });
