@@ -432,6 +432,17 @@
 
     .income-input-row input {
       width: 120px;
+      color: var(--pink-dark);
+    }
+
+    .income-input-row select {
+      width: 96px;
+      color: var(--pink-dark);
+    }
+
+    .income-input-row input::placeholder {
+      color: #b64b79;
+      opacity: 1;
     }
 
     .quick-form-grid {
@@ -872,6 +883,22 @@
           <label for="incomeInput">💰 Venit lunar (opțional):</label>
           <div class="income-input-row">
             <input type="number" id="incomeInput" min="0" step="0.01" placeholder="ex: 4000" />
+            <select id="incomeCurrencyInput" title="Moneda venitului">
+              <option value="RON" selected>RON</option>
+              <option value="EUR">EUR</option>
+              <option value="USD">USD</option>
+              <option value="GBP">GBP</option>
+              <option value="CHF">CHF</option>
+              <option value="MDL">MDL</option>
+              <option value="HUF">HUF</option>
+              <option value="BGN">BGN</option>
+              <option value="PLN">PLN</option>
+              <option value="TRY">TRY</option>
+              <option value="AED">AED</option>
+              <option value="CAD">CAD</option>
+              <option value="AUD">AUD</option>
+              <option value="JPY">JPY</option>
+            </select>
             <button type="submit" class="btn-save">Salvează</button>
           </div>
         </form>
@@ -1161,8 +1188,8 @@
       </div>
     `).join("");
     friendsEl.innerHTML = friendData.friends.map(friend => {
-      const summary = friend.months[currentMonth] || { spent: 0, income: null };
-      const income = summary.income === null ? "Venit nesetat" : `Venit ${summary.income.toFixed(2)} RON`;
+      const summary = friend.months[currentMonth] || { spent: 0, income: null, currency: "RON" };
+      const income = summary.income === null ? "Venit nesetat" : `Venit ${summary.income.toFixed(2)} ${summary.currency}`;
       return `
         <div class="friend-row">
           <div><strong>${escapeHtml(friend.name)}</strong><small>${escapeHtml(friend.email)}</small></div>
@@ -1389,10 +1416,14 @@
     try {
       const result = await api("/income", {
         method: "PUT",
-        body: JSON.stringify({ month: currentMonth, amount: value })
+        body: JSON.stringify({
+          month: currentMonth,
+          amount: value,
+          currency: document.getElementById("incomeCurrencyInput").value
+        })
       });
       if (result.amount === null) delete incomeData[currentMonth];
-      else incomeData[currentMonth] = result.amount;
+      else incomeData[currentMonth] = { amount: result.amount, currency: result.currency };
       renderAll();
     } catch (error) {
       alert(error.message);
@@ -1582,7 +1613,10 @@
   function renderReport(allData) {
     const monthExpenses = allData[currentMonth] || [];
     const monthTotal = monthExpenses.reduce((sum, item) => sum + toRON(item.amount, item.currency), 0);
-    const income = incomeData[currentMonth];
+    const storedIncome = incomeData[currentMonth];
+    const income = typeof storedIncome === "number"
+      ? { amount: storedIncome, currency: "RON" }
+      : storedIncome;
     const yearTotal = Object.values(allData).flat()
       .reduce((sum, item) => sum + toRON(item.amount, item.currency), 0);
     const totalsByCategory = CATEGORIES.map(category => ({
@@ -1596,13 +1630,14 @@
     document.getElementById("yearTotalDisplay").textContent = `${yearTotal.toFixed(2)} RON`;
     document.getElementById("expenseCountDisplay").textContent =
       String(Object.values(allData).flat().length);
-    document.getElementById("incomeInput").value = income ?? "";
+    document.getElementById("incomeInput").value = income?.amount ?? "";
+    document.getElementById("incomeCurrencyInput").value = income?.currency || "RON";
     document.getElementById("incomeSummaryItem").classList.toggle("visible", income !== undefined);
     document.getElementById("remainingSummaryItem").classList.toggle("visible", income !== undefined);
     document.getElementById("incomeDisplay").textContent =
-      income === undefined ? "Nesetat" : `${income.toFixed(2)} RON`;
+      income === undefined ? "Nesetat" : `${income.amount.toFixed(2)} ${income.currency}`;
     document.getElementById("remainingDisplay").textContent =
-      income === undefined ? "Nesetat" : `${(income - monthTotal).toFixed(2)} RON`;
+      income === undefined ? "Nesetat" : `${(income.amount * (RATES_TO_RON[income.currency] || 1) - monthTotal).toFixed(2)} RON`;
 
     const highest = totalsByCategory[0];
     document.getElementById("categoryTotals").innerHTML = totalsByCategory.map((item, index) => {

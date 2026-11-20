@@ -44,6 +44,7 @@ await pool.query(`
     amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
     UNIQUE (user_id, month)
   );
+  ALTER TABLE incomes ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'RON';
   CREATE TABLE IF NOT EXISTS password_resets (
     token_hash TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -278,11 +279,13 @@ app.delete("/api/expenses/:id", auth, async (req, res, next) => {
 app.get("/api/income", auth, async (req, res, next) => {
   try {
     const result = await pool.query(
-      "SELECT month, amount FROM incomes WHERE user_id = $1",
+      "SELECT month, amount, currency FROM incomes WHERE user_id = $1",
       [req.user.id]
     );
     res.json({
-      data: Object.fromEntries(result.rows.map(row => [row.month, Number(row.amount)]))
+      data: Object.fromEntries(result.rows.map(row => [
+        row.month, { amount: Number(row.amount), currency: row.currency }
+      ]))
     });
   } catch (error) { next(error); }
 });
@@ -302,13 +305,18 @@ app.put("/api/income", auth, async (req, res, next) => {
     if (!Number.isFinite(amount) || amount < 0) {
       return res.status(400).json({ error: "Venitul trebuie să fie un număr pozitiv sau zero." });
     }
+    const currency = String(req.body.currency || "RON").toUpperCase();
+    const allowedCurrencies = ["RON", "EUR", "USD", "GBP", "CHF", "MDL", "HUF", "BGN", "PLN", "TRY", "AED", "CAD", "AUD", "JPY"];
+    if (!allowedCurrencies.includes(currency)) {
+      return res.status(400).json({ error: "Moneda venitului este invalidă." });
+    }
     const result = await pool.query(
-      `INSERT INTO incomes (user_id, month, amount) VALUES ($1, $2, $3)
-       ON CONFLICT (user_id, month) DO UPDATE SET amount = EXCLUDED.amount
-       RETURNING amount`,
-      [req.user.id, month, amount]
+      `INSERT INTO incomes (user_id, month, amount, currency) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, month) DO UPDATE SET amount = EXCLUDED.amount, currency = EXCLUDED.currency
+       RETURNING amount, currency`,
+      [req.user.id, month, amount, currency]
     );
-    res.json({ amount: Number(result.rows[0].amount) });
+    res.json({ amount: Number(result.rows[0].amount), currency: result.rows[0].currency });
   } catch (error) { next(error); }
 });
 
@@ -339,24 +347,31 @@ app.get("/api/friends", auth, async (req, res, next) => {
           WHEN 'HUF' THEN 0.0125 WHEN 'BGN' THEN 2.54 WHEN 'PLN' THEN 1.16
           WHEN 'TRY' THEN 0.14 WHEN 'AED' THEN 1.26 WHEN 'CAD' THEN 3.35
           WHEN 'AUD' THEN 3.05 WHEN 'JPY' THEN 0.031 ELSE 1 END), 0) AS spent,
-          i.amount AS income
+          i.amount AS income, i.currency AS income_currency
          FROM expenses e
          LEFT JOIN incomes i ON i.user_id = e.user_id AND i.month = e.month
          WHERE e.user_id = $1
-         GROUP BY e.month, i.amount
+         GROUP BY e.month, i.amount, i.currency
          ORDER BY e.month`,
         [friend.id]
       );
       const months = Object.fromEntries(summary.rows.map(row => [
-        row.month, { spent: Number(row.spent), income: row.income === null ? null : Number(row.income) }
+        row.month, {
+          spent: Number(row.spent),
+          income: row.income === null ? null : Number(row.income),
+          currency: row.income_currency || "RON"
+        }
       ]));
       const incomes = await pool.query(
-        "SELECT month, amount FROM incomes WHERE user_id = $1",
+        "SELECT month, amount, currency FROM incomes WHERE user_id = $1",
         [friend.id]
       );
       for (const row of incomes.rows) {
-        if (!months[row.month]) months[row.month] = { spent: 0, income: Number(row.amount) };
-        else months[row.month].income = Number(row.amount);
+        if (!months[row.month]) months[row.month] = { spent: 0, income: Number(row.amount), currency: row.currency };
+        else {
+          months[row.month].income = Number(row.amount);
+          months[row.month].currency = row.currency;
+        }
       }
       friends.push({ ...friend, months });
     }
