@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Hello Dear Rose - Pink Budget Planner 💖</title>
+  <meta name="theme-color" content="#d6336c" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -540,6 +541,92 @@
       font-size: 0.95rem;
     }
 
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .summary-item {
+      background: linear-gradient(145deg, #fff 0%, #fff5f8 100%);
+      border: 1px solid var(--pink-light);
+      border-radius: 18px;
+      padding: 16px;
+    }
+
+    .summary-item span {
+      display: block;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+
+    .summary-item strong {
+      color: var(--pink-dark);
+      font-size: 1.25rem;
+    }
+
+    .category-totals {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    .category-total {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) 70px;
+      gap: 8px;
+      align-items: center;
+      font-size: 0.85rem;
+    }
+
+    .category-bar {
+      grid-column: 1 / -1;
+      height: 7px;
+      background: #ffe9f1;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .category-bar > span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #fcc2d7, #c2255c);
+    }
+
+    .report-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .advice-box {
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 16px;
+      background: #fff0f6;
+      color: var(--text-main);
+      line-height: 1.55;
+      font-size: 0.88rem;
+    }
+
+    @media (max-width: 820px) {
+      .summary-grid { grid-template-columns: 1fr; }
+      .category-totals { grid-template-columns: 1fr; }
+    }
+
+    @media print {
+      #splashScreen, #authScreen, .top-bar, .quick-add-box,
+      .user-actions, .report-actions, .btn-delete { display: none !important; }
+      #appScreen { display: block !important; padding: 0; }
+      body { background: white; }
+      .card, .summary-item { box-shadow: none; break-inside: avoid; }
+    }
+
     /* Modal schimbare parola */
     .modal-overlay {
       position: fixed;
@@ -594,7 +681,7 @@
         <path d="M45 27C45 24 47 22 50 22C53 22 55 24 55 27C55 30 53 32 50 32C47 32 45 30 45 27Z" fill="#fff0f6"/>
       </svg>
     </div>
-    <h1>Hello dear Rose</h1>
+    <h1>Hello dear</h1>
     <p>Bine ai venit în spațiul tău personal de buget ✨</p>
     <div class="loading-bar">
       <div class="loading-progress"></div>
@@ -720,6 +807,30 @@
       </div>
 
       <!-- Cerc mare roz + Lista cheltuieli -->
+      <div class="card" id="reportCard">
+        <h2>📈 Rezumat financiar</h2>
+        <div class="summary-grid">
+          <div class="summary-item">
+            <span>Luna selectată</span>
+            <strong id="monthTotalDisplay">0 RON</strong>
+          </div>
+          <div class="summary-item">
+            <span>Total anual</span>
+            <strong id="yearTotalDisplay">0 RON</strong>
+          </div>
+          <div class="summary-item">
+            <span>Număr cheltuieli</span>
+            <strong id="expenseCountDisplay">0</strong>
+          </div>
+        </div>
+        <div class="category-totals" id="categoryTotals"></div>
+        <div class="advice-box" id="adviceText"></div>
+        <div class="report-actions">
+          <button class="btn-outline" type="button" onclick="printReport()">📄 PDF / Imprimare</button>
+          <button class="btn-outline" type="button" onclick="shareReport()">📤 Distribuie raportul</button>
+        </div>
+      </div>
+
       <div class="dashboard-grid">
         <div class="card">
           <h2>🌸 Total Cheltuit (Raport Cerc)</h2>
@@ -928,7 +1039,7 @@
   ];
 
   const PINK_PALETTE = [
-    "#d6336c", "#f06595", "#faa2c1", "#e64980", "#fcc2d7", "#c2255c"
+    "#c2255c", "#e64980", "#f06595", "#faa2c1", "#fcc2d7", "#d6336c"
   ];
 
   let currentMonth = MONTHS[new Date().getMonth()];
@@ -1144,10 +1255,16 @@
       return;
     }
 
+    const maxAmount = Math.max(...expenses.map(item => toRON(item.amount, item.currency)), 1);
     expenses.forEach(item => {
       const ronVal = toRON(item.amount, item.currency);
+      const share = ronVal / maxAmount;
+      const shades = ["#fff9fb", "#fff0f6", "#ffe3ec", "#ffc9d9", "#faa2c1"];
+      const shadeIndex = Math.min(shades.length - 1, Math.floor(share * shades.length));
       const li = document.createElement("li");
       li.className = "expense-item";
+      li.style.background = shades[shadeIndex];
+      if (share > 0.72) li.style.color = "#4a154b";
       li.innerHTML = `
         <div class="expense-info">
           <strong>${item.desc}</strong>
@@ -1165,12 +1282,78 @@
     });
   }
 
+  function renderReport(allData) {
+    const monthExpenses = allData[currentMonth] || [];
+    const monthTotal = monthExpenses.reduce((sum, item) => sum + toRON(item.amount, item.currency), 0);
+    const yearTotal = Object.values(allData).flat()
+      .reduce((sum, item) => sum + toRON(item.amount, item.currency), 0);
+    const totalsByCategory = CATEGORIES.map(category => ({
+      category,
+      total: monthExpenses
+        .filter(item => item.category === category)
+        .reduce((sum, item) => sum + toRON(item.amount, item.currency), 0)
+    })).sort((a, b) => b.total - a.total);
+
+    document.getElementById("monthTotalDisplay").textContent = `${monthTotal.toFixed(2)} RON`;
+    document.getElementById("yearTotalDisplay").textContent = `${yearTotal.toFixed(2)} RON`;
+    document.getElementById("expenseCountDisplay").textContent =
+      String(Object.values(allData).flat().length);
+
+    const highest = totalsByCategory[0];
+    document.getElementById("categoryTotals").innerHTML = totalsByCategory.map((item, index) => {
+      const percent = monthTotal > 0 ? (item.total / monthTotal) * 100 : 0;
+      const shade = PINK_PALETTE[index % PINK_PALETTE.length];
+      return `
+        <div class="category-total">
+          <strong>${item.category}</strong>
+          <strong>${item.total.toFixed(2)} RON</strong>
+          <div class="category-bar">
+            <span style="width:${percent}%; background:${shade}"></span>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    let advice = "Nu ai suficiente cheltuieli în luna selectată pentru recomandări personalizate.";
+    if (monthTotal > 0) {
+      advice = highest.total > 0
+        ? `Categoria principală este „${highest.category}” — aproximativ ${((highest.total / monthTotal) * 100).toFixed(0)}% din cheltuielile lunii. ` +
+          `Poți începe prin stabilirea unei limite lunare pentru această categorie și urmărirea cheltuielilor mari individual.`
+        : advice;
+    }
+    document.getElementById("adviceText").textContent = advice;
+  }
+
+  function printReport() {
+    window.print();
+  }
+
+  async function shareReport() {
+    const allData = getUserBudgetData();
+    const monthExpenses = allData[currentMonth] || [];
+    const monthTotal = monthExpenses.reduce((sum, item) => sum + toRON(item.amount, item.currency), 0);
+    const text = `Raport ${currentMonth}: ${monthTotal.toFixed(2)} RON, ${monthExpenses.length} cheltuieli — My Budget`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `Raport ${currentMonth}`, text });
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+        alert("Raportul a fost copiat în clipboard.");
+      } else {
+        window.prompt("Copiază raportul:", text);
+      }
+    } catch (error) {
+      if (error.name !== "AbortError") alert("Raportul nu a putut fi distribuit.");
+    }
+  }
+
   function renderAll() {
     const allData = getUserBudgetData();
     const expenses = allData[currentMonth] || [];
     renderExpenseList(expenses);
     renderDonutChart(expenses);
     renderComparisonChart(allData);
+    renderReport(allData);
   }
 </script>
 </body>
