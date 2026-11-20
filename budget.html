@@ -1301,10 +1301,11 @@
     "#faa2c1", "#ffbad0", "#fcc2d7", "#a61e4d", "#9c1742",
     "#d45a82", "#bc3a70"
   ];
-  const CATEGORY_PILL_COLORS = [
-    "#ffd6e5", "#ffc2d7", "#ffb3cc", "#ffddea",
-    "#f9c2d5", "#ffe6ef", "#f7b2c9", "#ffcadb"
-  ];
+  function getCategoryColor(index) {
+    const hue = 325 + ((index * 17) % 36);
+    const lightness = 86 - ((index * 7) % 28);
+    return `hsl(${hue}, 78%, ${lightness}%)`;
+  }
 
   let currentMonth = MONTHS[new Date().getMonth()];
   let donutChart = null;
@@ -1357,7 +1358,7 @@
     const selected = selectedCategory || categoryInput.value || CATEGORIES[0];
     pills.innerHTML = CATEGORIES.map((category, index) => {
       const icons = ["🍔", "🥂", "🛍️", "🚕", "🏡", "✨"];
-      return `<div class="pill ${category === selected ? "selected" : ""}" style="--category-color:${CATEGORY_PILL_COLORS[index % CATEGORY_PILL_COLORS.length]}" data-cat="${category.replaceAll('"', "&quot;")}">
+      return `<div class="pill ${category === selected ? "selected" : ""}" style="--category-color:${getCategoryColor(index)}" data-cat="${category.replaceAll('"', "&quot;")}">
         ${icons[index] || "🌸"} ${category}
       </div>`;
     }).join("");
@@ -1504,7 +1505,7 @@
         labels: hasData ? CATEGORIES : ["Nicio cheltuială încă"],
         datasets: [{
           data: hasData ? totalsByCat : [1],
-          backgroundColor: hasData ? PINK_PALETTE : ["#ffdeeb"],
+          backgroundColor: hasData ? CATEGORIES.map((_, index) => getCategoryColor(index)) : ["#ffdeeb"],
           borderWidth: 3,
           borderColor: "#ffffff",
           hoverOffset: 8
