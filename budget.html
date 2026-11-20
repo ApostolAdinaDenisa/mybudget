@@ -629,16 +629,18 @@
         <label>Email sau Nume utilizator</label>
         <input type="text" id="regUser" placeholder="ex: rose@email.com" required />
         <label>Alege o parolă</label>
-        <input type="password" id="regPass" placeholder="Minim 4 caractere" minlength="4" required />
+        <input type="password" id="regPass" placeholder="Minim 8 caractere" minlength="8" required />
         <button type="submit" class="btn-primary">Creează contul 🌸</button>
       </form>
 
       <!-- Formular Schimbare Parola (daca ai uitat-o) -->
       <form id="resetForm" class="auth-form">
         <label>Email sau Nume utilizator</label>
-        <input type="text" id="resetUser" placeholder="Contul tău existent" required />
+        <input type="text" id="resetUser" placeholder="Emailul contului" />
+        <label>Codul din email (se completează automat din link)</label>
+        <input type="text" id="resetToken" placeholder="Lipește codul doar dacă este necesar" />
         <label>Parola nouă</label>
-        <input type="password" id="resetNewPass" placeholder="Noua parolă" minlength="4" required />
+        <input type="password" id="resetNewPass" placeholder="Noua parolă (minim 8 caractere)" minlength="8" />
         <button type="submit" class="btn-primary">Actualizează parola 🔐</button>
       </form>
 
@@ -750,7 +752,7 @@
       <h3>🔐 Schimbă parola contului</h3>
       <form id="inAppPassForm">
         <input type="password" id="oldPassInput" placeholder="Parola actuală" required />
-        <input type="password" id="newPassInput" placeholder="Parola nouă (minim 4 caractere)" minlength="4" required />
+        <input type="password" id="newPassInput" placeholder="Parola nouă (minim 8 caractere)" minlength="8" required />
         <div style="display:flex; gap:10px; margin-top:6px;">
           <button type="submit" class="btn-primary" style="flex:1; margin:0;">Salvează</button>
           <button type="button" class="btn-outline" onclick="closePassModal()">Anulează</button>
@@ -764,18 +766,20 @@
   /* ==================== GESTIONARE BAZA DE DATE UTILIZATORI ==================== */
   // Nota: Folosim IndexedDB / LocalStorage structurat ca baza de date multi-user.
   // Fiecare utilizator are propriul document JSON identificat prin username unic.
-  const DB_USERS_KEY = "rose_budget_users_db";
-  const SESSION_KEY = "rose_budget_active_session";
+  const API_URL = window.BUDGET_API_URL || "/api";
+  const TOKEN_KEY = "rose_budget_api_token";
+  let currentUser = null;
+  let budgetData = {};
 
-  function getUsersDB() {
-    return JSON.parse(localStorage.getItem(DB_USERS_KEY)) || {};
+  async function api(path, options = {}) {
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const body = response.status === 204 ? null : await response.json();
+  if (!response.ok) throw new Error(body?.error || "A apărut o eroare.");
+  return body;
   }
-
-  function saveUsersDB(db) {
-    localStorage.setItem(DB_USERS_KEY, JSON.stringify(db));
-  }
-
-  let currentUserKey = localStorage.getItem(SESSION_KEY) || null;
 
   /* ==================== 1. LOGICA SPLASH SCREEN ==================== */
   let splashFinished = false;
@@ -784,11 +788,9 @@
     splashFinished = true;
     document.getElementById("splashScreen").classList.add("hidden");
 
-    if (currentUserKey && getUsersDB()[currentUserKey]) {
-      openApp();
-    } else {
-      document.getElementById("authScreen").classList.add("active");
-    }
+    if (localStorage.getItem(TOKEN_KEY)) {
+      openApp().catch(() => logout());
+    } else document.getElementById("authScreen").classList.add("active");
   }
 
   // Dispare automat dupa 3.3 secunde
@@ -811,74 +813,69 @@
     el.className = "auth-msg " + type;
   }
 
+  const resetTokenFromUrl = new URLSearchParams(window.location.search).get("resetToken");
+  if (resetTokenFromUrl) {
+    document.getElementById("resetToken").value = resetTokenFromUrl;
+    switchAuthTab("reset");
+  }
+
   // Creare cont
-  document.getElementById("registerForm").addEventListener("submit", (e) => {
+  document.getElementById("registerForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = document.getElementById("regName").value.trim();
     const username = document.getElementById("regUser").value.trim().toLowerCase();
     const password = document.getElementById("regPass").value;
-
-    const db = getUsersDB();
-    if (db[username]) {
-      setAuthMessage("Acest cont există deja! Conectează-te.", "error");
-      return;
-    }
-
-    db[username] = {
-      name: name,
-      username: username,
-      password: btoa(password), // codificare simpla
-      budgetData: {}
-    };
-
-    saveUsersDB(db);
-    currentUserKey = username;
-    localStorage.setItem(SESSION_KEY, username);
-    setAuthMessage("Cont creat cu succes! Te conectăm...", "success");
-    setTimeout(openApp, 600);
+    try {
+      const result = await api("/auth/register", {
+        method: "POST", body: JSON.stringify({ name, email: username, password })
+      });
+      localStorage.setItem(TOKEN_KEY, result.token);
+      setAuthMessage("Cont creat cu succes! Te conectăm...", "success");
+      await openApp();
+    } catch (error) { setAuthMessage(error.message, "error"); }
   });
 
   // Conectare (Login)
-  document.getElementById("loginForm").addEventListener("submit", (e) => {
+  document.getElementById("loginForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const username = document.getElementById("loginUser").value.trim().toLowerCase();
     const password = document.getElementById("loginPass").value;
-
-    const db = getUsersDB();
-    const user = db[username];
-
-    if (!user || user.password !== btoa(password)) {
-      setAuthMessage("Email/utilizator sau parolă incorectă!", "error");
-      return;
-    }
-
-    currentUserKey = username;
-    localStorage.setItem(SESSION_KEY, username);
-    setAuthMessage("", "");
-    openApp();
+    try {
+      const result = await api("/auth/login", {
+        method: "POST", body: JSON.stringify({ email: username, password })
+      });
+      localStorage.setItem(TOKEN_KEY, result.token);
+      setAuthMessage("", "");
+      await openApp();
+    } catch (error) { setAuthMessage(error.message, "error"); }
   });
 
   // Resetare parola din ecranul de login
-  document.getElementById("resetForm").addEventListener("submit", (e) => {
+  document.getElementById("resetForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const username = document.getElementById("resetUser").value.trim().toLowerCase();
     const newPass = document.getElementById("resetNewPass").value;
-
-    const db = getUsersDB();
-    if (!db[username]) {
-      setAuthMessage("Nu am găsit niciun cont cu acest nume/email.", "error");
-      return;
-    }
-
-    db[username].password = btoa(newPass);
-    saveUsersDB(db);
-    setAuthMessage("Parola a fost schimbată! Te poți conecta acum.", "success");
-    setTimeout(() => switchAuthTab("login"), 1200);
+    const token = document.getElementById("resetToken").value.trim();
+    try {
+      if (!token) {
+        const result = await api("/auth/request-reset", {
+          method: "POST", body: JSON.stringify({ email: username })
+        });
+        setAuthMessage(result.message, "success");
+      } else {
+        const result = await api("/auth/reset", {
+          method: "POST", body: JSON.stringify({ token, password: newPass })
+        });
+        setAuthMessage(result.message, "success");
+        setTimeout(() => switchAuthTab("login"), 1200);
+      }
+    } catch (error) { setAuthMessage(error.message, "error"); }
   });
 
   function logout() {
-    localStorage.removeItem(SESSION_KEY);
-    currentUserKey = null;
+    localStorage.removeItem(TOKEN_KEY);
+    currentUser = null;
+    budgetData = {};
     document.getElementById("appScreen").classList.remove("active");
     document.getElementById("authScreen").classList.add("active");
   }
@@ -894,26 +891,23 @@
     document.getElementById("inAppPassForm").reset();
   }
 
-  document.getElementById("inAppPassForm").addEventListener("submit", (e) => {
+  document.getElementById("inAppPassForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const oldPass = document.getElementById("oldPassInput").value;
     const newPass = document.getElementById("newPassInput").value;
     const msgEl = document.getElementById("modalPassMsg");
 
-    const db = getUsersDB();
-    const user = db[currentUserKey];
-
-    if (user.password !== btoa(oldPass)) {
-      msgEl.textContent = "Parola actuală nu este corectă!";
+    try {
+      await api("/auth/change-password", {
+        method: "POST", body: JSON.stringify({ oldPassword: oldPass, newPassword: newPass })
+      });
+      msgEl.textContent = "Parola a fost actualizată cu succes! 💖";
+      msgEl.className = "auth-msg success";
+      setTimeout(closePassModal, 1100);
+    } catch (error) {
+      msgEl.textContent = error.message;
       msgEl.className = "auth-msg error";
-      return;
     }
-
-    user.password = btoa(newPass);
-    saveUsersDB(db);
-    msgEl.textContent = "Parola a fost actualizată cu succes! 💖";
-    msgEl.className = "auth-msg success";
-    setTimeout(closePassModal, 1100);
   });
 
   /* ==================== 4. LOGICA BUGET & GRAFICE PER UTILIZATOR ==================== */
@@ -950,25 +944,19 @@
     monthSelect.appendChild(opt);
   });
 
-  function openApp() {
+  async function openApp() {
     document.getElementById("authScreen").classList.remove("active");
     document.getElementById("appScreen").classList.add("active");
-    const user = getUsersDB()[currentUserKey];
-    document.getElementById("displayUserName").textContent = user.name;
+    const result = await api("/me");
+    const expenses = await api("/expenses");
+    currentUser = result.user;
+    budgetData = expenses.data || {};
+    document.getElementById("displayUserName").textContent = currentUser.name;
     renderAll();
   }
 
   function getUserBudgetData() {
-    const db = getUsersDB();
-    return db[currentUserKey]?.budgetData || {};
-  }
-
-  function saveUserBudgetData(newBudgetData) {
-    const db = getUsersDB();
-    if (db[currentUserKey]) {
-      db[currentUserKey].budgetData = newBudgetData;
-      saveUsersDB(db);
-    }
+    return budgetData;
   }
 
   // Buton + rapid
@@ -1004,7 +992,7 @@
   });
 
   // Adaugare cheltuiala in contul utilizatorului
-  document.getElementById("expenseForm").addEventListener("submit", (e) => {
+  document.getElementById("expenseForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const desc = document.getElementById("descInput").value.trim();
     const amount = parseFloat(document.getElementById("amountInput").value);
@@ -1013,30 +1001,40 @@
 
     if (!desc || isNaN(amount) || amount <= 0) return;
 
-    const data = getUserBudgetData();
-    if (!data[currentMonth]) data[currentMonth] = [];
-
-    data[currentMonth].unshift({
-      id: Date.now(),
+    try {
+      const result = await api("/expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          month: currentMonth, category, desc, amount, currency,
+          date: new Date().toLocaleDateString("ro-RO")
+        })
+      });
+      if (!budgetData[currentMonth]) budgetData[currentMonth] = [];
+      budgetData[currentMonth].unshift({
+        id: result.expense.id,
       category,
       desc,
       amount,
       currency,
-      date: new Date().toLocaleDateString("ro-RO")
-    });
-
-    saveUserBudgetData(data);
-    document.getElementById("descInput").value = "";
-    document.getElementById("amountInput").value = "";
-    document.getElementById("descInput").focus();
-    renderAll();
+        date: result.expense.date
+      });
+      document.getElementById("descInput").value = "";
+      document.getElementById("amountInput").value = "";
+      document.getElementById("descInput").focus();
+      renderAll();
+    } catch (error) {
+      alert(error.message);
+    }
   });
 
-  function deleteExpense(id) {
-    const data = getUserBudgetData();
-    data[currentMonth] = (data[currentMonth] || []).filter(item => item.id !== id);
-    saveUserBudgetData(data);
-    renderAll();
+  async function deleteExpense(id) {
+    try {
+      await api(`/expenses/${id}`, { method: "DELETE" });
+      budgetData[currentMonth] = (budgetData[currentMonth] || []).filter(item => item.id !== id);
+      renderAll();
+    } catch (error) {
+      alert(error.message);
+    }
   }
 
   function toRON(amount, currency) {
